@@ -1,0 +1,9 @@
+完全限定域名（fully qualified domain name，FQDN）,FQDN除包括主机名外，还包含主机所在的域名，例如DNS名称 www.winsvr.org，
+则www是主机名，winsvr.org则是这台主机所存在的域的域名。
+
+FQDN包含两部分：主机名和域名。
+
+完全限定域名可以从逻辑上准确的指出主机在什么地方，从全域名中可以看出主机在域名树中的位置。
+
+FQDN总是以主机名开始并且以顶级域名结束，“.”是指根域名服务器，当给出的名字是company而不是company.的时候，他通常是只主机名，
+而名字后面带.的通常认为是全域名，eg：www.company.com ，其中www是主机名，company.是二级域，.com是顶级域。
