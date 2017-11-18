@@ -1,0 +1,149 @@
+WSGI
+
+从客户端发送HTTP请求，到服务器响应之间发生的过程:
+
+1.框架提供一个可调用的’应用’（WSGI规格并没有要求如何实现）
+2.服务器每次接收到HTTP客户端请求后，执行可调用的’应用’。服务器把一个包含了WSGI/CGI变量的字典和一个可调用的’start_response’做为参数给
+可调用的’application’。
+3.框架/应用生成HTTP状态和HTTP响应头，然后把它们传给可调用的’start_response’，让服务器保存它们。框架/应用也返回一个响应体。
+4.服务器把状态，响应头，响应体合并到HTTP响应里，然后传给（HTTP）客户端（这步不是（WSGI）规格里的一部分，但它是后面流程中的一步.
+
+用自己的话解释，客户端在浏览器http访问主机和端口发起请求，通过网络层、传输层、网络接口层将请求传送到服务器。服务器监听端口请求，接收请求信息，
+解析请求内容，依据请求内容处理程序生成响应内容，返回响应内容到客户端。
+
+import socket
+import io
+import os
+
+import sys
+
+
+class WSGIServer(object):
+
+    address_family = socket.AF_INET
+    socket_type = socket.SOCK_STREAM
+    request_queue_size = 1
+
+    def __init__(self, server_address):
+        # 创建一个监听插口
+        self.listen_socket = listen_socket = socket.socket(
+            self.address_family,
+            self.socket_type
+        )
+        # 允许重复使用相同地址, 注意这里的setsockopt在Unix下使用,在windows下可能出现不明显的异常
+        listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # 绑定
+        listen_socket.bind(server_address)
+        # 触发
+        listen_socket.listen(self.request_queue_size)
+        # 取得服务器主机名和端口号
+        host, port = self.listen_socket.getsockname()[:2]
+        self.server_name = socket.getfqdn(host)
+        self.server_port = port
+        # Web框架或应用设置的返回头
+        self.headers_set = []
+
+    def set_app(self, application):
+        self.application = application
+
+    def server_forever(self):
+        listen_socket = self.listen_socket
+        while True:
+            # 新的客户端连接
+            self.client_connection, client_address = listen_socket.accept()
+            # 处理一个请求并关闭客户端连接. 当循环结束继续等待另一个客户端连接
+            self.handle_one_request()
+
+    def handle_one_request(self):
+        self.request_data = request_data = self.client_connection.recv(1024).decode('utf-8')
+        # 格式化打印服务器请求的数据
+        print(''.join('<{line}\n'.format(line=line)
+        for line in request_data.splitlines()))
+
+        self.parse_request(request_data)
+
+        # 使用请求数据创建环境字典
+        env = self.get_environ()
+
+        # 调用appliaction对象并返回一个结果  作为HTTP响应体
+        result = self.application(env, self.start_response)
+
+        # 创建一个响应并送回客户端
+        self.finish_response(result)
+
+    def parse_request(self, text):
+        request_line = text.splitlines()[0]
+        request_line = request_line.rstrip('\r\n')
+        # 将请求分解成组件
+        (self.request_method, # GET
+         self.path,            # /gello
+         self.request_version  # HTTP/1.1
+         ) = request_line.split()
+
+    def get_environ(self):
+        env = {}
+        # 下面的代码没有遵守PEP8  但是较直观
+        #
+        # 请求的WSGI变量
+        env['wsgi.version']                     = (1, 9)
+        env['wsgi.url_scheme']                  = 'http'
+        env['wsgi.input']                       = io.StringIO(self.request_data)
+        env['wsgi.errors']                      = sys.stderr
+        env['wsgi.multithread']                 = False
+        env['wsgi.multiprocess']                = False
+        env['wsgi.run_once']                    = False
+        # CGI变量
+        env['REQUEST_METHOD']                   = self.request_method     # GET
+        env['PATH_INFO']                        = self.path               # /hellp
+        env['SERVER_NAME']                      = self.server_name        # localhost
+        env['SERVER_PORT']                      = str(self.server_port)   # 8888
+        return env
+
+    def start_response(self, status, response_headers, exc_info=None):
+        # 添加必要的服务器头
+        server_headers = [
+            ('Date', '2017-11-15'),
+            ('Server', 'WSGIServer 0.2'),
+        ]
+        self.headers_set = [status, response_headers + server_headers]
+        # 遵循WSGI规范必须返回一个可写的start_response调用对象
+        # 暂时这里只简单写个返回
+        # return self.finish_response
+
+    def finish_response(self, result):
+        try:
+            status, response_headers = self.headers_set
+            response = 'HTTP/1.1 {status}\r\n'.format(status=status)
+            for header in response_headers:
+                response += '{0}: {1}\r\n'.format(*header)
+            response += '\r\n'
+            for data in result:
+                response += data.decode('utf-8')
+            # 格式化打印响应数据
+            print(''.join('>{line}\n'.format(line=line)
+                          for line in response.splitlines()
+                          ))
+            self.client_connection.sendall(response.encode())
+        finally:
+            self.client_connection.close()
+
+
+SERVER_ADDRESS = (HOST, PORT) = '', 8888
+
+
+def make_server(server_address, application):
+    server = WSGIServer(server_address)
+    server.set_app(application)
+    return server
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        sys.exit('Provide a WSGI application object as module: callable')
+    app_path = sys.argv[1]
+    module, application = app_path.split(':')
+    module = __import__(module)
+    application = getattr(module, application)
+    httpd = make_server(SERVER_ADDRESS, application)
+    print('WSGIServer: Serving HTTP on port {port} ...\n'.format(port=PORT))
+    httpd.server_forever()
